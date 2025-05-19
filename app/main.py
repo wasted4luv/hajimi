@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 from app.models.schemas import ErrorResponse
 from app.services import GeminiClient
 from app.utils import (
@@ -16,7 +17,8 @@ from app.utils import (
 )
 from app.config.persistence import save_settings, load_settings
 from app.api import router, init_router, dashboard_router, init_dashboard_router
-from app.vertex.vertex import init_vertex_ai
+from app.vertex.vertex_ai_init import init_vertex_ai
+from app.vertex.credentials_manager import CredentialManager
 import app.config.settings as settings
 from app.config.safety import SAFETY_SETTINGS, SAFETY_SETTINGS_G2
 import asyncio
@@ -28,6 +30,17 @@ BASE_DIR = pathlib.Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(limit="50M")
+
+# --------------- CORS 中间件 ---------------
+# 如果 ALLOWED_ORIGINS 为空列表，则不允许任何跨域请求
+if settings.ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # --------------- 全局实例 ---------------
 load_settings()
@@ -117,7 +130,13 @@ sys.excepthook = handle_exception
 @app.on_event("startup")
 async def startup_event():
     
-    init_vertex_ai()
+    # 初始化CredentialManager
+    credential_manager_instance = CredentialManager()
+    # 添加到应用程序状态
+    app.state.credential_manager = credential_manager_instance
+    
+    # 初始化Vertex AI服务
+    await init_vertex_ai(credential_manager=credential_manager_instance)
     schedule_cache_cleanup(response_cache_manager, active_requests_manager)
     # 检查版本
     await check_version()
@@ -195,7 +214,8 @@ async def startup_event():
     init_dashboard_router(
         key_manager,
         response_cache_manager,
-        active_requests_manager
+        active_requests_manager,
+        credential_manager_instance
     )
 
 # --------------- 异常处理 ---------------
