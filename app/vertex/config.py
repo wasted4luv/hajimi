@@ -29,7 +29,7 @@ PROJECT_ID = os.environ.get('VERTEX_PROJECT_ID', '')
 LOCATION = os.environ.get('VERTEX_LOCATION', 'us-central1')
 
 # 模型配置URL
-default_models_config_url = "https://gist.githubusercontent.com/gzzhongqi/e0b684f319437a859bcf5bd6203fd1f6/raw"
+default_models_config_url = "https://raw.githubusercontent.com/gzzhongqi/vertex2openai/refs/heads/main/vertexModels.json"
 MODELS_CONFIG_URL = os.environ.get('VERTEX_MODELS_CONFIG_URL', default_models_config_url)
 vertex_log('info', f"Using models config URL: {MODELS_CONFIG_URL}")
 
@@ -43,12 +43,35 @@ if hasattr(settings, 'VERTEX_EXPRESS_API_KEY') and settings.VERTEX_EXPRESS_API_K
 # 假流式响应配置
 FAKE_STREAMING_ENABLED = settings.FAKE_STREAMING if hasattr(settings, 'FAKE_STREAMING') else False
 FAKE_STREAMING_INTERVAL_SECONDS = settings.FAKE_STREAMING_INTERVAL if hasattr(settings, 'FAKE_STREAMING_INTERVAL') else 1.0
-vertex_log('info', f"Fake streaming is {'enabled' if FAKE_STREAMING_ENABLED else 'disabled'} with interval {FAKE_STREAMING_INTERVAL_SECONDS} seconds")
+FAKE_STREAMING_CHUNK_SIZE = settings.FAKE_STREAMING_CHUNK_SIZE if hasattr(settings, 'FAKE_STREAMING_CHUNK_SIZE') else 10
+FAKE_STREAMING_DELAY_PER_CHUNK = settings.FAKE_STREAMING_DELAY_PER_CHUNK if hasattr(settings, 'FAKE_STREAMING_DELAY_PER_CHUNK') else 0.1
+vertex_log('info', f"Fake streaming is {'enabled' if FAKE_STREAMING_ENABLED else 'disabled'} with interval {FAKE_STREAMING_INTERVAL_SECONDS} seconds, chunk size {FAKE_STREAMING_CHUNK_SIZE}, delay per chunk {FAKE_STREAMING_DELAY_PER_CHUNK} seconds")
 
 def update_env_var(name, value):
     """Update environment variable in memory."""
     os.environ[name] = value
     vertex_log('info', f"Updated environment variable: {name}")
+
+def reload_config():
+    """重新加载配置，通常在持久化设置加载后调用"""
+    global GOOGLE_CREDENTIALS_JSON, VERTEX_EXPRESS_API_KEY_VAL, API_KEY
+    
+    # 重新加载Google Credentials JSON
+    GOOGLE_CREDENTIALS_JSON = settings.GOOGLE_CREDENTIALS_JSON if hasattr(settings, 'GOOGLE_CREDENTIALS_JSON') else ""
+    if GOOGLE_CREDENTIALS_JSON:
+        vertex_log('info', "重新加载了GOOGLE_CREDENTIALS_JSON配置")
+    
+    # 重新加载Vertex Express API Key
+    VERTEX_EXPRESS_API_KEY_VAL = []
+    if hasattr(settings, 'VERTEX_EXPRESS_API_KEY') and settings.VERTEX_EXPRESS_API_KEY:
+        VERTEX_EXPRESS_API_KEY_VAL = [key.strip() for key in settings.VERTEX_EXPRESS_API_KEY.split(',') if key.strip()]
+        if VERTEX_EXPRESS_API_KEY_VAL:
+            vertex_log('info', f"重新加载了{len(VERTEX_EXPRESS_API_KEY_VAL)}个Vertex Express API keys")
+    
+    # 重新加载API Key
+    API_KEY = settings.PASSWORD if hasattr(settings, 'PASSWORD') else ""
+    if API_KEY:
+        vertex_log('info', "重新加载了API Key配置")
 
 def update_config(name, value):
     """Update config variables in settings and environment variables."""
@@ -88,12 +111,24 @@ def update_config(name, value):
         global FAKE_STREAMING_ENABLED
         FAKE_STREAMING_ENABLED = value
         vertex_log('info', f"Updated FAKE_STREAMING to {value}")
+        # 确保环境变量也被更新
+        os.environ['FAKE_STREAMING'] = str(value).lower()
     elif name == 'FAKE_STREAMING_INTERVAL':
         # 更新FAKE_STREAMING_INTERVAL配置
         settings.FAKE_STREAMING_INTERVAL = value
         global FAKE_STREAMING_INTERVAL_SECONDS
         FAKE_STREAMING_INTERVAL_SECONDS = value
         vertex_log('info', f"Updated FAKE_STREAMING_INTERVAL to {value}")
+    elif name == 'FAKE_STREAMING_CHUNK_SIZE':
+        settings.FAKE_STREAMING_CHUNK_SIZE = value
+        global FAKE_STREAMING_CHUNK_SIZE
+        FAKE_STREAMING_CHUNK_SIZE = value
+        vertex_log('info', f"Updated FAKE_STREAMING_CHUNK_SIZE to {value}")
+    elif name == 'FAKE_STREAMING_DELAY_PER_CHUNK':
+        settings.FAKE_STREAMING_DELAY_PER_CHUNK = value
+        global FAKE_STREAMING_DELAY_PER_CHUNK
+        FAKE_STREAMING_DELAY_PER_CHUNK = value
+        vertex_log('info', f"Updated FAKE_STREAMING_DELAY_PER_CHUNK to {value}")
     else:
         vertex_log('warning', f"Unknown config variable: {name}")
         return

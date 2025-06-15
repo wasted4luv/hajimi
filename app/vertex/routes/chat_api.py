@@ -98,14 +98,24 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
         elif is_grounded_search: base_model_name = base_model_name[:-len("-search")]
         elif is_encrypted_full_model: base_model_name = base_model_name[:-len("-encrypt-full")] # Must be before -encrypt
         elif is_encrypted_model: base_model_name = base_model_name[:-len("-encrypt")]
-        elif is_nothinking_model: base_model_name = base_model_name[:-len("-nothinking")]
-        elif is_max_thinking_model: base_model_name = base_model_name[:-len("-max")]
+        elif is_nothinking_model:
+            base_model_name = base_model_name[:-len("-nothinking")]
+        elif is_max_thinking_model:
+            base_model_name = base_model_name[:-len("-max")]
         
+        # Define supported models for these specific variants
+        supported_flash_variants = [
+            "gemini-2.5-flash-preview-04-17",
+            "gemini-2.5-flash-preview-05-20",
+            "gemini-2.5-pro-preview-06-05"
+        ]
+        supported_flash_variants_str = "' or '".join(supported_flash_variants)
+
         # Specific model variant checks (if any remain exclusive and not covered dynamically)
-        if is_nothinking_model and base_model_name != "gemini-2.5-flash-preview-04-17":
-            return JSONResponse(status_code=400, content=create_openai_error_response(400, f"Model '{request.model}' (-nothinking) is only supported for 'gemini-2.5-flash-preview-04-17'.", "invalid_request_error"))
-        if is_max_thinking_model and base_model_name != "gemini-2.5-flash-preview-04-17":
-            return JSONResponse(status_code=400, content=create_openai_error_response(400, f"Model '{request.model}' (-max) is only supported for 'gemini-2.5-flash-preview-04-17'.", "invalid_request_error"))
+        if is_nothinking_model and base_model_name not in supported_flash_variants:
+            return JSONResponse(status_code=400, content=create_openai_error_response(400, f"Model '{request.model}' (-nothinking) is only supported for '{supported_flash_variants_str}'.", "invalid_request_error"))
+        if is_max_thinking_model and base_model_name not in supported_flash_variants:
+            return JSONResponse(status_code=400, content=create_openai_error_response(400, f"Model '{request.model}' (-max) is only supported for '{supported_flash_variants_str}'.", "invalid_request_error"))
 
         generation_config = create_generation_config(request)
 
@@ -241,7 +251,16 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
             }
 
             if request.stream:
-                if app_config.FAKE_STREAMING_ENABLED:
+                # 每次调用时直接从settings获取最新的FAKE_STREAMING值
+                fake_streaming_enabled = False
+                if hasattr(settings, 'FAKE_STREAMING'):
+                    fake_streaming_enabled = settings.FAKE_STREAMING
+                else:
+                    fake_streaming_enabled = app_config.FAKE_STREAMING_ENABLED
+                
+                vertex_log('info', f"DEBUG: FAKE_STREAMING setting is {fake_streaming_enabled} for OpenAI model {request.model}")
+                
+                if fake_streaming_enabled:
                     vertex_log('info', f"INFO: OpenAI Fake Streaming (SSE Simulation) ENABLED for model '{request.model}'.")
                     # openai_params already has "stream": True from initial setup,
                     # but openai_fake_stream_generator will make a stream=False call internally.
@@ -402,9 +421,17 @@ async def chat_completions(fastapi_request: Request, request: OpenAIRequest, api
                 generation_config["system_instruction"] = encryption_instructions_placeholder
                 current_prompt_func = create_encrypted_full_gemini_prompt
             elif is_nothinking_model:
-                generation_config["thinking_config"] = {"thinking_budget": 0}
+                # 为gemini-2.5-pro-preview-06-05设置特定的thinking_budget
+                if base_model_name == "gemini-2.5-pro-preview-06-05":
+                    generation_config["thinking_config"] = {"thinking_budget": 128}
+                else:
+                    generation_config["thinking_config"] = {"thinking_budget": 0}
             elif is_max_thinking_model:
-                generation_config["thinking_config"] = {"thinking_budget": 24576}
+                # 为gemini-2.5-pro-preview-06-05设置特定的thinking_budget
+                if base_model_name == "gemini-2.5-pro-preview-06-05":
+                    generation_config["thinking_config"] = {"thinking_budget": 32768}
+                else:
+                    generation_config["thinking_config"] = {"thinking_budget": 24576}
             
             # For non-auto models, the 'base_model_name' might have suffix stripped.
             # We should use the original 'request.model' for API call if it's a suffixed one,
